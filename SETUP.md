@@ -32,11 +32,11 @@ read/edit in Obsidian.
 - **The rest of the vault reaches bm only via "perspirator" (the `perspirate` skill),**
   which has full-vault scope and acts as a curating bridge: it reads the wider vault and
   writes relevant context into the `memory` folder. bm itself never sees the other notes.
-  (Wiring this bridge is a FUTURE step — see bottom.)
+  (Built as Perspirator Modes 7/8 — see bottom.)
 - **New memory notes go in the `memory` folder** — `write_note` with `folder: "."`
   (bm's project root IS the memory folder).
-- **Web apps (ChatGPT, Claude web) are deferred** — they require a remote server; only
-  the local CLIs (Codex, Claude Code) are connected for now.
+- **Web apps (ChatGPT, Claude web) connect remotely** — via Tailscale Funnel + OAuth
+  proxy; see `RUNBOOK.md` in this repo.
 
 ## History / incident log
 
@@ -113,9 +113,9 @@ Built as Modes 7/8 of the Perspirator 9000 skill (deployed to `~/.claude/command
 - `problem_index.py` excludes `/memory` so the two note populations never double-index.
 - perspirate is LOCAL-only (Claude Code); web apps just consume whatever memory notes exist.
 
-## IN PROGRESS (2026-07-05): connect the web apps (ChatGPT + Claude web)
+## DONE (2026-07-05): connect the web apps (ChatGPT + Claude web)
 
-Self-hosted (free) path chosen: Tailscale Funnel -> FastMCP OAuth proxy (GitHub IdP,
-single-user allowlist) -> local basic-memory on loopback. Scaffolded and locally validated
-in `C:\Users\nimee\basic-memory-remote\` — **see `RUNBOOK.md` there for the architecture,
-remaining interactive steps, and acceptance tests** (single source of truth; not repeated here).
+Self-hosted (free): Tailscale Funnel -> FastMCP OAuth proxy (GitHub IdP, single-user
+allowlist) -> local basic-memory on loopback. Live and acceptance-tested — **see
+`RUNBOOK.md` in this repo** for the architecture, procedure, live values, and tests
+(single source of truth; not repeated here).
