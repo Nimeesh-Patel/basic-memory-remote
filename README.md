@@ -6,9 +6,11 @@ ChatGPT, Claude (web), Codex CLI, and Claude Code**, built on
 notes are plain markdown in a subfolder of an Obsidian vault — readable and
 editable by hand, by any of the AI apps, or by Obsidian itself.
 
-This repo is the **single source of truth for the whole system**: how it's
-wired, why it's wired that way, how to operate it, and how to rebuild it from
-scratch.
+This repo is the **single source of truth for the system's infrastructure**:
+how it's wired, why it's wired that way, how to operate it, and how to rebuild
+it from scratch. The *content* — the memory notes themselves, and since
+2026-07-10 the Perspirator runtime that curates them — lives in the vault's
+`memory\` folder, not here.
 
 ## The whole system
 
@@ -30,11 +32,18 @@ scratch.
 ```
 
 Plus a curation layer: the rest of the vault (677+ problem notes) is reachable
-only through the **Perspirator 9000** skill's bridge modes — Mode 7 exports a
-curated brief from the vault into `memory\`; Mode 8 promotes durable knowledge
-from `memory\` back into vault problem notes. bm itself never indexes the vault
-outside `memory\` (it once did, and rewrote every note — see SETUP.md's
-incident log for why this boundary is load-bearing).
+only through **Perspirator**'s bridge modes — Mode 7 exports a curated brief
+from the vault into `memory\`; Mode 8 promotes durable knowledge from `memory\`
+back into vault problem notes. bm itself never indexes the vault outside
+`memory\` (it once did, and rewrote every note — see SETUP.md's incident log
+for why this boundary is load-bearing).
+
+Since 2026-07-10, Perspirator's operating logic is itself a vault note:
+`memory\perspirator\Perspirator.md`, with its changelog, proposals, behavioural
+cases, and run reports alongside. The installed skill is only a bootstrap that
+loads it. Because `memory\perspirator\` sits inside bm's scope, every connected
+app can read — and criticise — Perspirator's logic and run reports through bm;
+execution still happens only in the local CLIs.
 
 ## Why this shape
 
@@ -67,7 +76,8 @@ Not in this repo but part of the system:
 |-------|-------|
 | Memory notes | `C:\Users\nimee\nimeesh vault\memory\` |
 | bm CLI + config | `C:\Users\nimee\.local\bin\basic-memory.exe`, `C:\Users\nimee\.basic-memory\config.json` |
-| Vault↔memory bridge (Modes 7/8) | The [Perspirator 9000](https://github.com/Nimeesh-Patel/Perspirator-9000) repo / `C:\Users\nimee\Perspirator 9000` |
+| Perspirator runtime (all modes, incl. bridge Modes 7/8) | `C:\Users\nimee\nimeesh vault\memory\perspirator\Perspirator.md` — canonical, edited in Obsidian, visible to all apps via bm |
+| Perspirator bootstrap + structural scripts | The [Perspirator 9000](https://github.com/Nimeesh-Patel/Perspirator-9000) repo / `C:\Users\nimee\Perspirator 9000`, deployed to `~\.claude\commands` and `~\.agents\skills\perspirate` |
 | Agent memory protocol | `~\.claude\CLAUDE.md` and `~\.codex\AGENTS.md` ("Shared cross-app memory" section) |
 | Auto-start at logon | `basic-memory-remote.cmd` in the user Startup folder (`shell:startup`) → runs `start.ps1` |
 

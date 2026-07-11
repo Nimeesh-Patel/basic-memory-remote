@@ -113,6 +113,23 @@ Built as Modes 7/8 of the Perspirator 9000 skill (deployed to `~/.claude/command
 - `problem_index.py` excludes `/memory` so the two note populations never double-index.
 - perspirate is LOCAL-only (Claude Code); web apps just consume whatever memory notes exist.
 
+### Update (2026-07-10): the skill's logic moved INTO the memory folder
+
+The Perspirator skill was split. The deployed files (`~/.claude/commands/perspirate.md`,
+`~/.agents/skills/perspirate/SKILL.md`) are now a small **bootstrap**; the canonical
+operating logic is a vault note — `nimeesh vault\memory\perspirator\Perspirator.md` —
+read at the start of every run. Editing it in Obsidian changes the next run; no redeploy.
+Consequences for THIS system:
+
+- `memory\perspirator\` (runtime + CHANGELOG + `proposals/` + `cases/` + `runs/`) sits
+  **inside bm's scope**, so bm indexes it and the web apps can read Perspirator's logic
+  and run reports remotely. That is deliberate. bm stamping `permalink:` frontmatter on
+  those files is expected and harmless (they live in `memory\`, where bm is allowed).
+- Execution is still local-only: web apps can now read and criticise the runtime, but
+  nothing remote runs Perspirator.
+- Details and rationale: the Perspirator-9000 repo README and the memory notes
+  "Perspirator and Basic Memory Problems" / "Editable Agent Logic Policy".
+
 ## DONE (2026-07-05): connect the web apps (ChatGPT + Claude web)
 
 Self-hosted (free): Tailscale Funnel -> FastMCP OAuth proxy (GitHub IdP, single-user
