@@ -63,6 +63,9 @@ service). The Tailscale Funnel is already persistent once set in step A.
   complete GitHub consent.
 
 ## Acceptance tests
+NOTE: run these from OUTSIDE the tailnet, or at least verify public DNS first (see
+Troubleshooting) — from this laptop the hostname resolves to the tailnet IP and curls
+bypass the public Funnel ingress entirely, so they can pass while the public path is dead.
 ```
 # 1. unauth -> 401 with WWW-Authenticate: Bearer resource_metadata="..."
 curl -i https://<FUNNEL>/mcp
@@ -83,3 +86,38 @@ curl -m 3 https://<FUNNEL>:8000/   # should NOT reach basic-memory (only 8080 is
   no token or wrong login → denied).
 - Rotate the GitHub client secret if it ever leaks. Never commit `.env`.
 - `tailscale funnel off` (or `tailscale funnel 8080 off`) takes the endpoint down fast.
+
+## Troubleshooting
+
+### Web apps say the server is offline, but everything looks fine locally (2026-07-19)
+Symptom: ChatGPT reported the connector unreachable, yet `tailscale funnel status` said
+"Funnel on", both services were listening, and `curl https://<FUNNEL>/mcp` from this
+laptop passed every acceptance test.
+
+Cause: local curls are misleading — inside the tailnet the hostname resolves to the
+tailnet IP (100.x) and traffic bypasses the public Funnel ingress. The actual fault was
+on Tailscale's side of the fence: the control plane had dropped this node's Funnel
+registration (suspected trigger: the laptop's frequent sleep/wake cycles), so the PUBLIC
+DNS record reverted from the Funnel ingress IPs to the unroutable 100.x tailnet IP.
+External clients could not connect at all.
+
+Diagnose (from this laptop, but bypassing the tailnet path):
+```
+# Ask Tailscale's authoritative DNS directly. Healthy = public ingress IPs
+# (e.g. 103.84.155.x); broken = 100.x:
+nslookup lenovoideapad.tailec13e9.ts.net ns1.dnsimple.com
+
+# True external vantage. Healthy = "HTTP/1.1 401" + Www-Authenticate
+# (that IS success — it's the OAuth entry point). Broken = connection error:
+curl "https://api.hackertarget.com/httpheaders/?q=https://lenovoideapad.tailec13e9.ts.net/mcp"
+```
+
+Fix — escalation that worked on 2026-07-19 (DNS flipped to ingress IPs within ~3 min
+of the serve reset; plain funnel off/on alone did NOT fix it):
+```
+tailscale down; tailscale up          # fresh control-plane session
+tailscale serve reset                 # wipe serve/funnel config
+tailscale funnel --bg --https=443 http://127.0.0.1:8080   # re-apply -> re-registers
+# then re-run the nslookup check above until it shows public IPs (TTL is 600s,
+# so give ChatGPT/Claude up to ~10 min after the flip before retrying)
+```
