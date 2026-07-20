@@ -121,3 +121,24 @@ tailscale funnel --bg --https=443 http://127.0.0.1:8080   # re-apply -> re-regis
 # then re-run the nslookup check above until it shows public IPs (TTL is 600s,
 # so give ChatGPT/Claude up to ~10 min after the flip before retrying)
 ```
+
+### Watchdog (added 2026-07-20 — this recurs, so it is now automated)
+The failure recurred overnight on 2026-07-20 and again after a tailscaled restart, so
+the working theory is: any control-plane reconnect (sleep/wake, daemon restart/update)
+can silently drop the Funnel DNS registration.
+
+`funnel-watchdog.ps1` (this folder) automates the fix: it asks Tailscale's authoritative
+nameservers (dnsimple) for the hostname's A record — the same answer external clients
+get — and if it has reverted to the tailnet 100.x IP while Funnel is locally enabled,
+runs `tailscale serve reset` + re-applies the funnel, with a 30-min cooldown to avoid
+reset-looping during DNS propagation. It logs to `watchdog.log` (gitignored, rotated at
+500 KB) and does nothing if Funnel is intentionally off or the network is down.
+
+Scheduled task `basic-memory-funnel-watchdog` (Task Scheduler, runs as the user,
+LeastPrivilege): every 15 min + 2 min after logon + 2 min after wake-from-sleep
+(Power-Troubleshooter event 1). Registration needed an elevated shell. Worst-case
+outage window is now ~15–45 min instead of "until someone notices".
+
+Tailscale auto-update is enabled (`tailscale set --auto-update`, since 1.98.9) — note
+each update restarts the daemon, which can itself trigger the drop; the watchdog
+catches that too.
