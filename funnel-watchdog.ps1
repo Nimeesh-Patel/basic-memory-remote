@@ -8,11 +8,23 @@ $hostname    = 'lenovoideapad.tailec13e9.ts.net'
 $nameservers = @('ns1.dnsimple.com', 'ns2.dnsimple-edge.net', 'ns3.dnsimple.com')
 $logFile     = Join-Path $PSScriptRoot 'watchdog.log'
 $stateFile   = Join-Path $PSScriptRoot 'watchdog.state'
+$repairFile  = Join-Path $PSScriptRoot 'watchdog.repair'
 $cooldownMin = 30   # don't re-remediate while DNS (TTL 600s) is still propagating
 
 function Write-Log([string]$msg) {
     $line = '{0:yyyy-MM-dd HH:mm:ss}  {1}' -f (Get-Date), $msg
     Add-Content -Path $logFile -Value $line -Encoding utf8
+}
+
+# Re-apply the Funnel, clearing the in-repair marker once it succeeds.
+function Invoke-FunnelApply([string]$context) {
+    $out = cmd /c "tailscale funnel --bg --https=443 http://127.0.0.1:8080 2>&1"
+    if ($LASTEXITCODE -eq 0) {
+        Remove-Item $repairFile -ErrorAction SilentlyContinue
+        Write-Log "${context}: funnel re-applied; DNS should flip within ~3 min (TTL 600s)"
+    } else {
+        Write-Log "ERROR: funnel re-apply failed (${context}): $($out -join ' | ')"
+    }
 }
 
 # keep the log from growing unbounded
@@ -31,7 +43,21 @@ $funnelWanted = $false
 if ($serve.AllowFunnel) {
     foreach ($p in $serve.AllowFunnel.PSObject.Properties) { if ($p.Value) { $funnelWanted = $true } }
 }
-if (-not $funnelWanted) { Write-Log 'SKIP: funnel not enabled locally'; exit 0 }
+if (-not $funnelWanted) {
+    # `serve reset` below clears AllowFunnel, so a remediation interrupted between
+    # the reset and the re-apply looks identical to an intentional funnel-off, and
+    # this guard would skip forever (it did, from 2026-07-25 23:47 onward). The
+    # marker separates the two: only ever finish a repair this script started.
+    if (Test-Path $repairFile) {
+        Write-Log 'RESUMING: funnel off with a repair marker present - finishing interrupted remediation'
+        Invoke-FunnelApply 'RESUMED'
+    } else {
+        Write-Log 'SKIP: funnel not enabled locally'
+    }
+    exit 0
+}
+# Funnel is on, so no repair is outstanding; drop any marker left by a past run.
+Remove-Item $repairFile -ErrorAction SilentlyContinue
 
 # 2. Ask the authoritative nameservers what the public internet sees.
 $answers = $null
@@ -64,11 +90,8 @@ if (Test-Path $stateFile) {
 
 Write-Log "BROKEN: public DNS reverted to $($ips -join ', ') - running serve reset + funnel re-apply"
 Set-Content $stateFile ('{0:yyyy-MM-dd HH:mm:ss}' -f (Get-Date)) -Encoding utf8
+# Marker first: from here until the re-apply succeeds, a funnel-off state is ours.
+Set-Content $repairFile ('{0:yyyy-MM-dd HH:mm:ss}' -f (Get-Date)) -Encoding utf8
 cmd /c "tailscale serve reset 2>nul" | Out-Null
 Start-Sleep -Seconds 2
-$out = cmd /c "tailscale funnel --bg --https=443 http://127.0.0.1:8080 2>&1"
-if ($LASTEXITCODE -eq 0) {
-    Write-Log 'REMEDIATED: funnel re-applied; DNS should flip within ~3 min (TTL 600s)'
-} else {
-    Write-Log "ERROR: funnel re-apply failed: $($out -join ' | ')"
-}
+Invoke-FunnelApply 'REMEDIATED'
