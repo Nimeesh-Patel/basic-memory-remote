@@ -81,17 +81,18 @@ curl -m 3 https://<FUNNEL>:8000/   # should NOT reach basic-memory (only 8080 is
 ```
 
 ## Policy loader
-On every `tools/list` the proxy reads two notes under `VAULT_PATH` and appends their
-text to tool descriptions, so policies are in context when an agent acts:
+On every `tools/list` the proxy composes the policy reminder under `VAULT_PATH` and
+appends it to tool descriptions, so policies are in context when an agent acts.
 `memory\policies\Policy Loader.md` supplies the lead-in wording and the list of tools
-that carry it; `memory\policies\Policy Index.md` supplies the policy list, carried
-verbatim. The same text goes out as MCP instructions at session start.
+that carry it; every other `memory\policies\*.md` contributes one line — its title and
+the problem stated under its `## Problem` heading. There is no stored index to keep
+fresh. The same text goes out as MCP instructions at session start.
 
-Both notes are re-read every `POLICY_REFRESH_SECONDS` (optional in `.env`, default 10),
-so editing a note in Obsidian and re-listing tools is a fast loop — no restart, no
-reinstall. Adding a policy, rewording the reminder, or changing which tools carry it
-are all vault edits with no code change. `VAULT_PATH` (optional in `.env`, default
-`<home>\nimeesh vault`) is the single locator; both note paths derive from it.
+Sources are re-read every `POLICY_REFRESH_SECONDS` (optional in `.env`, default 10),
+so editing a policy in Obsidian and re-listing tools is a fast loop — no restart, no
+reinstall. Adding a policy is dropping a file into the folder; a file without a
+`## Problem` section is skipped. `VAULT_PATH` (optional in `.env`, default
+`<home>\nimeesh vault`) is the single locator; every path derives from it.
 
 The loader never evaluates content and never blocks or alters any call — it only
 appends text to tool descriptions. `proxy.py` holds one hardcoded string,

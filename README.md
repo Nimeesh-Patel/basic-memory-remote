@@ -75,26 +75,33 @@ Policies in `memory\policies\` only exert force if they are in an agent's
 context when it acts, so the proxy carries them there. On every `tools/list` it
 reads two notes and appends their text to tool descriptions:
 
-| Note | Supplies |
+| Source | Supplies |
 |---|---|
 | `memory\policies\Policy Loader.md` | the lead-in wording, and the list of tools that carry the reminder |
-| `memory\policies\Policy Index.md` | the policy list itself, carried verbatim |
+| every `memory\policies\*.md` with a `## Problem` section | one line each: the policy's title and the problem it states it solves |
+
+**There is no stored index.** Each policy states the one problem it solves, and
+the selection surface is composed from those statements at read time, so
+changing a policy's problem changes what agents see on the next read and adding
+a policy is dropping in a file. Nothing has to be kept in sync, which is the
+point: a hand-maintained index is a copy that goes stale exactly when nobody
+remembers to update it. A file with no `## Problem` section is not a policy and
+is skipped.
 
 The same text is also sent as the server's MCP instructions at session start.
-Both the wording and the choice of tools are decisions, so both live in a note
-rather than in `proxy.py`: adding a policy, rewording the reminder, or changing
-which tools carry it is a vault edit with **no code change and no restart** —
-the notes are re-read every `POLICY_REFRESH_SECONDS` (default 10). `VAULT_PATH`
-is the single locator the proxy needs (default `<home>\nimeesh vault`); both
-note paths are derived from it.
+The wording and the choice of tools are decisions, so both live in a note
+rather than in `proxy.py`: rewording the reminder or changing which tools carry
+it is a vault edit with **no code change and no restart** — sources are re-read
+every `POLICY_REFRESH_SECONDS` (default 10). `VAULT_PATH` is the single locator
+the proxy needs (default `<home>\nimeesh vault`); every path derives from it.
 
 The loader never evaluates content and never blocks or alters a call: it
 appends text to descriptions and nothing else. `proxy.py` holds exactly one
 string of instruction text — `Policy Index unavailable — read memory/policies
 before writing.` — used when the notes themselves cannot be read, which is the
-one thing a note cannot say about itself. If the Index is unreadable, the
-listed tools carry that disclosure; if the Loader note is unreadable, every
-tool does, since the note naming them is gone. Either way every read and write
+one thing a note cannot say about itself. If no policy can be read, the listed
+tools carry that disclosure; if the Loader note is unreadable, every tool does,
+since the note naming them is gone. Either way every read and write
 still succeeds untouched. Note that the local CLIs reach basic-memory over
 stdio and bypass the proxy, so this loader does not cover them — there, policy
 loading is the Perspirator runtime's job.
@@ -130,7 +137,7 @@ Not in this repo but part of the system:
 | Memory notes | `C:\Users\nimee\nimeesh vault\memory\` |
 | bm CLI + config | `C:\Users\nimee\.local\bin\basic-memory.exe`, `C:\Users\nimee\.basic-memory\config.json` |
 | Perspirator runtime + bootstrap contract | `...\memory\perspirator\Perspirator.md` and `Bootstrap.md` — canonical, edited in Obsidian, visible to all apps via bm |
-| Policy text the proxy carries | `...\memory\policies\Policy Loader.md` and `Policy Index.md` |
+| Policy text the proxy carries | `...\memory\policies\` — one note per policy, each stating its problem |
 | Perspirator installer + structural scripts | The [Perspirator 9000](https://github.com/Nimeesh-Patel/Perspirator-9000) repo / `C:\Users\nimee\Perspirator 9000`, deployed to `~\.claude\commands` and `~\.agents\skills\perspirate` |
 | Agent memory protocol | `~\.claude\CLAUDE.md` and `~\.codex\AGENTS.md` ("Shared cross-app memory" section) |
 | Auto-start at logon | `basic-memory-remote.cmd` in the user Startup folder (`shell:startup`) → runs `start.ps1` |

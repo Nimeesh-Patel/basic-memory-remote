@@ -24,10 +24,12 @@ put secrets in this file.
   VAULT_PATH          default <home>\nimeesh vault   (the only note locator)
   POLICY_REFRESH_SECONDS  default 10
 
-Every text this proxy shows an agent lives in a vault note under VAULT_PATH:
-memory\policies\Policy Loader.md (the lead-in wording and the tools that carry
-it) and memory\policies\Policy Index.md. The single exception, which cannot be
-otherwise, is the hardcoded disclosure used when those notes are unreadable.
+Every text this proxy shows an agent lives in a vault note under VAULT_PATH.
+memory\policies\Policy Loader.md supplies the lead-in wording and the tools
+that carry it; the selection surface is composed at read time from the
+`## Problem` section of every policy in memory\policies\, so no stored index
+has to be kept in sync. The single exception, which cannot be otherwise, is
+the hardcoded disclosure used when those notes are unreadable.
 """
 
 import os
@@ -79,12 +81,13 @@ PROXY_PORT = int(os.environ.get("PROXY_PORT", "8080"))
 VAULT_PATH = Path(os.environ.get("VAULT_PATH", Path.home() / "nimeesh vault"))
 POLICY_REFRESH_SECONDS = float(os.environ.get("POLICY_REFRESH_SECONDS", "10"))
 
-POLICY_INDEX_NOTE = VAULT_PATH / "memory" / "policies" / "Policy Index.md"
-POLICY_LOADER_NOTE = VAULT_PATH / "memory" / "policies" / "Policy Loader.md"
+POLICIES_DIR = VAULT_PATH / "memory" / "policies"
+POLICY_LOADER_NOTE = POLICIES_DIR / "Policy Loader.md"
 
-# Section headings in the Loader note: locators, not content.
+# Section headings: locators, not content.
 LEAD_IN_HEADING = "## Lead-in"
 TOOLS_HEADING = "## Tools that carry it"
+PROBLEM_HEADING = "## Problem"
 
 # The one hardcoded string this program is allowed. It cannot live in a note,
 # because it is what an agent must be told when the note layer is unreachable.
@@ -120,13 +123,49 @@ def _bullets(body: str) -> list[str]:
     ]
 
 
+def _title(text: str, fallback: str) -> str:
+    """The frontmatter title, else the filename."""
+    lines = text.replace("\r\n", "\n").split("\n")
+    if lines and lines[0].strip() == "---":
+        for line in lines[1:]:
+            if line.strip() == "---":
+                break
+            if line.startswith("title:"):
+                return line.partition(":")[2].strip().strip("'\"") or fallback
+    return fallback
+
+
+def policy_problems() -> str | None:
+    """One line per policy: its title and the problem it states it solves.
+
+    Composed at read time from the policy notes themselves, so nothing has to
+    be kept in sync. A file with no `## Problem` section is not a policy and is
+    skipped. Transport only: the problem text is copied, never interpreted.
+    """
+    try:
+        paths = sorted(POLICIES_DIR.glob("*.md"))
+    except OSError:
+        return None
+    lines = []
+    for path in paths:
+        text = _read(path)
+        if text is None:
+            continue
+        problem = _section_body(text, PROBLEM_HEADING)
+        if not problem:
+            continue
+        lines.append(f"- {_title(text, path.stem)} — {' '.join(problem.split())}")
+    return "\n".join(lines) if lines else None
+
+
 def policy_payload() -> tuple[str, frozenset[str] | None]:
     """The text to append and the tools that carry it, refreshed periodically.
 
-    Transport only: both the lead-in wording and the list of tools are read
-    from the Policy Loader note, and the Policy Index is read whole. Nothing
-    here parses, evaluates, or judges what any of them say. A tool set of None
-    means the note layer could not be read, so the disclosure goes everywhere.
+    Transport only: the lead-in wording and the list of tools come from the
+    Policy Loader note, and the selection surface is composed from each
+    policy's own stated problem. Nothing here parses, evaluates, or judges what
+    any of them say. A tool set of None means the note layer could not be read,
+    so the disclosure goes everywhere.
     """
     global _policy_cache
     now = time.monotonic()
@@ -139,13 +178,13 @@ def policy_payload() -> tuple[str, frozenset[str] | None]:
     else:
         lead_in = _section_body(loader, LEAD_IN_HEADING)
         tools = _bullets(_section_body(loader, TOOLS_HEADING))
-        index = _read(POLICY_INDEX_NOTE)
+        problems = policy_problems()
         if not lead_in or not tools:
             payload = (POLICY_UNAVAILABLE, None)
-        elif index is None:
+        elif problems is None:
             payload = (POLICY_UNAVAILABLE, frozenset(tools))
         else:
-            payload = (f"{lead_in}\n\n{index}", frozenset(tools))
+            payload = (f"{lead_in}\n\n{problems}", frozenset(tools))
 
     _policy_cache = (now, payload)
     return payload
