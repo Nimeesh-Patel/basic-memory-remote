@@ -32,40 +32,72 @@ it from scratch. The *content* — the memory notes themselves, and since
 ```
 
 Plus a curation layer: the rest of the vault (677+ problem notes) is reachable
-only through **Perspirator**'s bridge modes — Mode 7 exports a curated brief
-from the vault into `memory\`; Mode 8 promotes durable knowledge from `memory\`
-back into vault problem notes. bm itself never indexes the vault outside
-`memory\` (it once did, and rewrote every note — see SETUP.md's incident log
-for why this boundary is load-bearing).
+only through **Perspirator**, which has full-vault scope and moves curated
+context into `memory\` and durable knowledge back out, under the approval rules
+its runtime defines. bm itself never indexes the vault outside `memory\` (it
+once did, and rewrote every note — see the incident log below for why this
+boundary is load-bearing).
 
 Since 2026-07-10, Perspirator's operating logic is itself a vault note:
-`memory\perspirator\Perspirator.md`, with its changelog, proposals, behavioural
-cases, and run reports alongside. The installed skill is only a bootstrap that
-loads it. Because `memory\perspirator\` sits inside bm's scope, every connected
+`memory\perspirator\Perspirator.md`, with its bootstrap contract, proposals,
+and run reports alongside. The installed skill is only a locator that loads
+them. Because `memory\perspirator\` sits inside bm's scope, every connected
 app can read — and criticise — Perspirator's logic and run reports through bm;
 execution still happens only in the local CLIs.
+
+## Key architecture decisions (do not regress these)
+
+- **bm is scoped to a SUBFOLDER, not the whole vault.** Project `memory` points
+  at `C:\Users\nimee\nimeesh vault\memory`. It must NOT be pointed at the vault
+  root. *Why:* when bm was first pointed at the whole vault it REWROTE all 677
+  existing notes, adding `permalink:` frontmatter (and `title:`/`type:` to notes
+  that had none). Scoping it to a subfolder makes it structurally impossible to
+  touch the rest of the vault again. A subfolder is still the same Obsidian
+  vault, just one folder.
+- **New memory notes go in the `memory` folder** — `write_note` with
+  `folder: "."`, since bm's project root *is* the memory folder.
+- **Local CLIs speak stdio; web apps connect remotely** via Tailscale Funnel +
+  the OAuth proxy (`RUNBOOK.md`). bm has no auth of its own, so it stays
+  loopback-only.
+- **Every text an agent reads is a vault note; code holds only locators.** The
+  proxy carries policy text (below); Perspirator's bootstrap contract and
+  runtime are notes, not packaged files.
+
+Incident log: 2026-06-29 installed, mistakenly scoped to the whole vault, 677
+notes rewritten. 2026-06-30 error-corrected — re-scoped to `memory\`, index DB
+reset, `permalink:` stripped from all 677 notes (other metadata left as bm had
+written it, per instruction). Full pre-revert backup of every `.md`:
+`C:\Users\nimee\nimeesh-vault-backup-20260630_174333`.
 
 ## Policy loader
 
 Policies in `memory\policies\` only exert force if they are in an agent's
-context when it acts, so the proxy carries them there: on every `tools/list` it
-reads `policies\Policy Index.md` fresh (cached ~2 minutes) and appends the text
-to the descriptions of the write-class tools — `write_note`, `edit_note`,
-`delete_note`, `move_note`, `canvas` — under a short lead-in. The same text is
-also sent as the server's MCP instructions at session start. The agent reads
-the Index, then reads whichever policies look relevant; because the code
-carries the Index rather than a fixed list, adding or changing a policy is a
-vault edit with no code change. `POLICY_INDEX_PATH` overrides where the Index
-is read from (default `<home>\nimeesh vault\memory\policies\Policy Index.md`);
-that locator is the only configuration.
+context when it acts, so the proxy carries them there. On every `tools/list` it
+reads two notes and appends their text to tool descriptions:
+
+| Note | Supplies |
+|---|---|
+| `memory\policies\Policy Loader.md` | the lead-in wording, and the list of tools that carry the reminder |
+| `memory\policies\Policy Index.md` | the policy list itself, carried verbatim |
+
+The same text is also sent as the server's MCP instructions at session start.
+Both the wording and the choice of tools are decisions, so both live in a note
+rather than in `proxy.py`: adding a policy, rewording the reminder, or changing
+which tools carry it is a vault edit with **no code change and no restart** —
+the notes are re-read every `POLICY_REFRESH_SECONDS` (default 10). `VAULT_PATH`
+is the single locator the proxy needs (default `<home>\nimeesh vault`); both
+note paths are derived from it.
 
 The loader never evaluates content and never blocks or alters a call: it
-appends text to descriptions and nothing else. If the Index is missing or
-unreadable, the write tools carry `Policy Index unavailable — read
-memory/policies before writing.` instead, and every read and write still
-succeeds untouched. Note that the local CLIs reach basic-memory over stdio and
-bypass the proxy, so this loader does not cover them — there, policy loading is
-the Perspirator runtime's job.
+appends text to descriptions and nothing else. `proxy.py` holds exactly one
+string of instruction text — `Policy Index unavailable — read memory/policies
+before writing.` — used when the notes themselves cannot be read, which is the
+one thing a note cannot say about itself. If the Index is unreadable, the
+listed tools carry that disclosure; if the Loader note is unreadable, every
+tool does, since the note naming them is gone. Either way every read and write
+still succeeds untouched. Note that the local CLIs reach basic-memory over
+stdio and bypass the proxy, so this loader does not cover them — there, policy
+loading is the Perspirator runtime's job.
 
 ## Why this shape
 
@@ -85,8 +117,7 @@ the Perspirator runtime's job.
 
 | File | Role |
 |------|------|
-| `README.md` | This overview — the map of the whole system. |
-| `SETUP.md` | The **local** half: install bm, scope it to `vault\memory`, register it in Claude Code + Codex, memory-usage protocol. Written as a verifiable end-state a coding agent can be pointed at. |
+| `README.md` | This overview — the map of the whole system, and the local half: bm scoped to `vault\memory`, registered in Claude Code + Codex. |
 | `RUNBOOK.md` | The **remote** half: Funnel + GitHub OAuth App + proxy, step by step, with acceptance tests and the current live deployment values. |
 | `proxy.py` | The FastMCP OAuth proxy (GitHub provider + fail-closed `RequireAllowedUser` middleware, plus the `CarryPolicyIndex` loader). Config via `.env`; no secrets in code. |
 | `start.ps1` | Starts both services: bm on `127.0.0.1:8000`, proxy on `127.0.0.1:8080`. |
@@ -98,8 +129,9 @@ Not in this repo but part of the system:
 |-------|-------|
 | Memory notes | `C:\Users\nimee\nimeesh vault\memory\` |
 | bm CLI + config | `C:\Users\nimee\.local\bin\basic-memory.exe`, `C:\Users\nimee\.basic-memory\config.json` |
-| Perspirator runtime (all modes, incl. bridge Modes 7/8) | `C:\Users\nimee\nimeesh vault\memory\perspirator\Perspirator.md` — canonical, edited in Obsidian, visible to all apps via bm |
-| Perspirator bootstrap + structural scripts | The [Perspirator 9000](https://github.com/Nimeesh-Patel/Perspirator-9000) repo / `C:\Users\nimee\Perspirator 9000`, deployed to `~\.claude\commands` and `~\.agents\skills\perspirate` |
+| Perspirator runtime + bootstrap contract | `...\memory\perspirator\Perspirator.md` and `Bootstrap.md` — canonical, edited in Obsidian, visible to all apps via bm |
+| Policy text the proxy carries | `...\memory\policies\Policy Loader.md` and `Policy Index.md` |
+| Perspirator installer + structural scripts | The [Perspirator 9000](https://github.com/Nimeesh-Patel/Perspirator-9000) repo / `C:\Users\nimee\Perspirator 9000`, deployed to `~\.claude\commands` and `~\.agents\skills\perspirate` |
 | Agent memory protocol | `~\.claude\CLAUDE.md` and `~\.codex\AGENTS.md` ("Shared cross-app memory" section) |
 | Auto-start at logon | `basic-memory-remote.cmd` in the user Startup folder (`shell:startup`) → runs `start.ps1` |
 
@@ -122,10 +154,32 @@ Not in this repo but part of the system:
 
 ## Rebuilding from scratch
 
-1. `SETUP.md` — local bm, scoped correctly, wired into the CLIs. Point a
-   coding agent at it and ask it to verify/fix the end-state.
-2. `RUNBOOK.md` — the remote path: Tailscale, GitHub OAuth App, `.env`,
+1. **Local bm.** `python -m pip install uv` then `python -m uv tool install
+   basic-memory` (exe lands at `~\.local\bin\basic-memory.exe`). Scope it to the
+   subfolder — and to nothing else:
+   ```
+   basic-memory project add memory "C:\Users\nimee\nimeesh vault\memory"
+   basic-memory project default memory
+   ```
+   Verify with `basic-memory project list`: `memory` must be default and no
+   project may point at the vault root. (The CLI writes both the index DB and
+   `~\.basic-memory\config.json`; if they disagree the DB wins for
+   `project list` — reconcile by emptying `projects` in config.json and
+   re-adding.) Then confirm no `permalink:` frontmatter exists in the vault
+   outside `memory\`; if any appears, bm has been re-indexing the root.
+2. **Register it with the local CLIs** (the env vars are REQUIRED on Windows —
+   a cp1252 console crashes on unicode otherwise):
+   ```
+   claude mcp add basic-memory -s user -e PYTHONUTF8=1 -e PYTHONIOENCODING=utf-8 -- "C:\Users\nimee\.local\bin\basic-memory.exe" mcp
+   codex  mcp add basic-memory   --env PYTHONUTF8=1 --env PYTHONIOENCODING=utf-8 -- "C:\Users\nimee\.local\bin\basic-memory.exe" mcp
+   ```
+   Check with `claude mcp list` / `codex mcp list`.
+3. `RUNBOOK.md` — the remote path: Tailscale, GitHub OAuth App, `.env`,
    `start.ps1`, connector registration, acceptance tests.
+
+How agents are told to *use* the memory is not documented here: the recall and
+pruning protocol lives in `~\.claude\CLAUDE.md` / `~\.codex\AGENTS.md`, and the
+policies the proxy carries live in `memory\policies\`.
 
 ## Security model (summary)
 

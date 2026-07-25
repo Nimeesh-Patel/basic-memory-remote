@@ -21,7 +21,13 @@ put secrets in this file.
   BACKEND_URL         default http://127.0.0.1:8000/mcp
   PROXY_HOST          default 127.0.0.1
   PROXY_PORT          default 8080
-  POLICY_INDEX_PATH   default <home>\nimeesh vault\memory\policies\Policy Index.md
+  VAULT_PATH          default <home>\nimeesh vault   (the only note locator)
+  POLICY_REFRESH_SECONDS  default 10
+
+Every text this proxy shows an agent lives in a vault note under VAULT_PATH:
+memory\policies\Policy Loader.md (the lead-in wording and the tools that carry
+it) and memory\policies\Policy Index.md. The single exception, which cannot be
+otherwise, is the hardcoded disclosure used when those notes are unreadable.
 """
 
 import os
@@ -68,44 +74,81 @@ BACKEND_URL = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000/mcp")
 PROXY_HOST = os.environ.get("PROXY_HOST", "127.0.0.1")
 PROXY_PORT = int(os.environ.get("PROXY_PORT", "8080"))
 
-# Policy Index: a locator, not a policy. POLICY_INDEX_PATH overrides where the
-# Index is read from; nothing else about this loader is configurable.
-POLICY_INDEX_PATH = Path(
-    os.environ.get(
-        "POLICY_INDEX_PATH",
-        Path.home() / "nimeesh vault" / "memory" / "policies" / "Policy Index.md",
-    )
-)
-POLICY_INDEX_TTL_SECONDS = 120
+# One locator. Every text this program shows an agent lives in a vault note
+# below it; nothing here holds instruction text except the disclosure below.
+VAULT_PATH = Path(os.environ.get("VAULT_PATH", Path.home() / "nimeesh vault"))
+POLICY_REFRESH_SECONDS = float(os.environ.get("POLICY_REFRESH_SECONDS", "10"))
 
-WRITE_CLASS_TOOLS = frozenset(
-    {"write_note", "edit_note", "delete_note", "move_note", "canvas"}
-)
-POLICY_LEAD_IN = (
-    "Active policies — read the relevant ones (memory/policies) before writing:"
-)
+POLICY_INDEX_NOTE = VAULT_PATH / "memory" / "policies" / "Policy Index.md"
+POLICY_LOADER_NOTE = VAULT_PATH / "memory" / "policies" / "Policy Loader.md"
+
+# Section headings in the Loader note: locators, not content.
+LEAD_IN_HEADING = "## Lead-in"
+TOOLS_HEADING = "## Tools that carry it"
+
+# The one hardcoded string this program is allowed. It cannot live in a note,
+# because it is what an agent must be told when the note layer is unreachable.
 POLICY_UNAVAILABLE = "Policy Index unavailable — read memory/policies before writing."
 
-_policy_cache: tuple[float, str] | None = None
+_policy_cache: tuple[float, tuple[str, frozenset[str] | None]] | None = None
 
 
-def policy_text() -> str:
-    """The Policy Index text, read fresh at most every POLICY_INDEX_TTL_SECONDS.
+def _read(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return None
 
-    Transport only: the file's bytes are read and returned. Nothing here parses,
-    evaluates, or judges what the Index says. If it cannot be read, callers get
-    the disclosure line instead.
+
+def _section_body(text: str, heading: str) -> str:
+    """The lines under a `## ` heading, up to the next `## ` heading."""
+    body, collecting = [], False
+    for line in text.replace("\r\n", "\n").split("\n"):
+        if line.startswith("## "):
+            collecting = line.strip() == heading
+            continue
+        if collecting:
+            body.append(line)
+    return "\n".join(body).strip()
+
+
+def _bullets(body: str) -> list[str]:
+    return [
+        line.strip()[2:].strip()
+        for line in body.split("\n")
+        if line.strip().startswith("- ")
+    ]
+
+
+def policy_payload() -> tuple[str, frozenset[str] | None]:
+    """The text to append and the tools that carry it, refreshed periodically.
+
+    Transport only: both the lead-in wording and the list of tools are read
+    from the Policy Loader note, and the Policy Index is read whole. Nothing
+    here parses, evaluates, or judges what any of them say. A tool set of None
+    means the note layer could not be read, so the disclosure goes everywhere.
     """
     global _policy_cache
     now = time.monotonic()
-    if _policy_cache is not None and now - _policy_cache[0] < POLICY_INDEX_TTL_SECONDS:
+    if _policy_cache is not None and now - _policy_cache[0] < POLICY_REFRESH_SECONDS:
         return _policy_cache[1]
-    try:
-        text = f"{POLICY_LEAD_IN}\n\n{POLICY_INDEX_PATH.read_text(encoding='utf-8')}"
-    except OSError:
-        text = POLICY_UNAVAILABLE
-    _policy_cache = (now, text)
-    return text
+
+    loader = _read(POLICY_LOADER_NOTE)
+    if loader is None:
+        payload = (POLICY_UNAVAILABLE, None)
+    else:
+        lead_in = _section_body(loader, LEAD_IN_HEADING)
+        tools = _bullets(_section_body(loader, TOOLS_HEADING))
+        index = _read(POLICY_INDEX_NOTE)
+        if not lead_in or not tools:
+            payload = (POLICY_UNAVAILABLE, None)
+        elif index is None:
+            payload = (POLICY_UNAVAILABLE, frozenset(tools))
+        else:
+            payload = (f"{lead_in}\n\n{index}", frozenset(tools))
+
+    _policy_cache = (now, payload)
+    return payload
 
 
 class RequireAllowedUser(Middleware):
@@ -130,13 +173,14 @@ class RequireAllowedUser(Middleware):
 
 
 class CarryPolicyIndex(Middleware):
-    """Append the Policy Index to write-class tool descriptions on tools/list.
+    """Append the Policy Index to tool descriptions on tools/list.
 
     Policies in memory\\policies\\ only exert force if they are in context at the
-    moment of action, so the Index rides along with the tools that write. What
-    it says — and which policies the agent then reads in full — is the agent's
-    judgment, not this code's. It carries the Index rather than a fixed list of
-    policies, so adding or changing a policy needs no code change here.
+    moment of action, so the Index rides along with the tools that act on
+    memory. Which tools those are, and what the reminder says, are read from
+    the Policy Loader note — both are decisions, so neither lives here. What
+    the policies mean, and which of them the agent then reads in full, is the
+    agent's judgment, not this code's.
 
     This hook is additive and fail-open: it touches descriptions only, and any
     failure returns the tools untouched. It never blocks or alters a call.
@@ -145,14 +189,14 @@ class CarryPolicyIndex(Middleware):
     async def on_list_tools(self, context: MiddlewareContext, call_next):
         tools = await call_next(context)
         try:
-            text = policy_text()
+            text, carriers = policy_payload()
             return [
                 tool.model_copy(
                     update={
                         "description": f"{tool.description or ''}\n\n{text}".strip()
                     }
                 )
-                if tool.name in WRITE_CLASS_TOOLS
+                if carriers is None or tool.name in carriers
                 else tool
                 for tool in tools
             ]
@@ -173,7 +217,7 @@ proxy = create_proxy(
     auth=auth,
     # Server instructions are sent once at session start; the middleware keeps
     # the same text fresh on every tools/list.
-    instructions=policy_text(),
+    instructions=policy_payload()[0],
 )
 proxy.add_middleware(RequireAllowedUser())
 proxy.add_middleware(CarryPolicyIndex())
