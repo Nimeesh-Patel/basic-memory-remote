@@ -1,4 +1,4 @@
-"""
+r"""
 FastMCP OAuth proxy in front of a local basic-memory server.
 
   [ChatGPT / Claude web] --HTTPS--> Tailscale Funnel
@@ -21,10 +21,12 @@ put secrets in this file.
   BACKEND_URL         default http://127.0.0.1:8000/mcp
   PROXY_HOST          default 127.0.0.1
   PROXY_PORT          default 8080
+  POLICY_INDEX_PATH   default <home>\nimeesh vault\memory\policies\Policy Index.md
 """
 
 import os
 import sys
+import time
 from pathlib import Path
 
 from fastmcp.server import create_proxy
@@ -66,6 +68,45 @@ BACKEND_URL = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000/mcp")
 PROXY_HOST = os.environ.get("PROXY_HOST", "127.0.0.1")
 PROXY_PORT = int(os.environ.get("PROXY_PORT", "8080"))
 
+# Policy Index: a locator, not a policy. POLICY_INDEX_PATH overrides where the
+# Index is read from; nothing else about this loader is configurable.
+POLICY_INDEX_PATH = Path(
+    os.environ.get(
+        "POLICY_INDEX_PATH",
+        Path.home() / "nimeesh vault" / "memory" / "policies" / "Policy Index.md",
+    )
+)
+POLICY_INDEX_TTL_SECONDS = 120
+
+WRITE_CLASS_TOOLS = frozenset(
+    {"write_note", "edit_note", "delete_note", "move_note", "canvas"}
+)
+POLICY_LEAD_IN = (
+    "Active policies — read the relevant ones (memory/policies) before writing:"
+)
+POLICY_UNAVAILABLE = "Policy Index unavailable — read memory/policies before writing."
+
+_policy_cache: tuple[float, str] | None = None
+
+
+def policy_text() -> str:
+    """The Policy Index text, read fresh at most every POLICY_INDEX_TTL_SECONDS.
+
+    Transport only: the file's bytes are read and returned. Nothing here parses,
+    evaluates, or judges what the Index says. If it cannot be read, callers get
+    the disclosure line instead.
+    """
+    global _policy_cache
+    now = time.monotonic()
+    if _policy_cache is not None and now - _policy_cache[0] < POLICY_INDEX_TTL_SECONDS:
+        return _policy_cache[1]
+    try:
+        text = f"{POLICY_LEAD_IN}\n\n{POLICY_INDEX_PATH.read_text(encoding='utf-8')}"
+    except OSError:
+        text = POLICY_UNAVAILABLE
+    _policy_cache = (now, text)
+    return text
+
 
 class RequireAllowedUser(Middleware):
     """Fail-closed: only ALLOWED_GITHUB_USER may do anything."""
@@ -88,6 +129,37 @@ class RequireAllowedUser(Middleware):
         return await call_next(context)
 
 
+class CarryPolicyIndex(Middleware):
+    """Append the Policy Index to write-class tool descriptions on tools/list.
+
+    Policies in memory\\policies\\ only exert force if they are in context at the
+    moment of action, so the Index rides along with the tools that write. What
+    it says — and which policies the agent then reads in full — is the agent's
+    judgment, not this code's. It carries the Index rather than a fixed list of
+    policies, so adding or changing a policy needs no code change here.
+
+    This hook is additive and fail-open: it touches descriptions only, and any
+    failure returns the tools untouched. It never blocks or alters a call.
+    """
+
+    async def on_list_tools(self, context: MiddlewareContext, call_next):
+        tools = await call_next(context)
+        try:
+            text = policy_text()
+            return [
+                tool.model_copy(
+                    update={
+                        "description": f"{tool.description or ''}\n\n{text}".strip()
+                    }
+                )
+                if tool.name in WRITE_CLASS_TOOLS
+                else tool
+                for tool in tools
+            ]
+        except Exception:
+            return tools
+
+
 auth = GitHubProvider(
     client_id=GH_CLIENT_ID,
     client_secret=GH_CLIENT_SECRET,
@@ -95,8 +167,16 @@ auth = GitHubProvider(
     required_scopes=["read:user"],
 )
 
-proxy = create_proxy(BACKEND_URL, name="basic-memory-remote", auth=auth)
+proxy = create_proxy(
+    BACKEND_URL,
+    name="basic-memory-remote",
+    auth=auth,
+    # Server instructions are sent once at session start; the middleware keeps
+    # the same text fresh on every tools/list.
+    instructions=policy_text(),
+)
 proxy.add_middleware(RequireAllowedUser())
+proxy.add_middleware(CarryPolicyIndex())
 
 if __name__ == "__main__":
     print(f"basic-memory-remote proxy -> backend {BACKEND_URL}")

@@ -45,6 +45,28 @@ loads it. Because `memory\perspirator\` sits inside bm's scope, every connected
 app can read — and criticise — Perspirator's logic and run reports through bm;
 execution still happens only in the local CLIs.
 
+## Policy loader
+
+Policies in `memory\policies\` only exert force if they are in an agent's
+context when it acts, so the proxy carries them there: on every `tools/list` it
+reads `policies\Policy Index.md` fresh (cached ~2 minutes) and appends the text
+to the descriptions of the write-class tools — `write_note`, `edit_note`,
+`delete_note`, `move_note`, `canvas` — under a short lead-in. The same text is
+also sent as the server's MCP instructions at session start. The agent reads
+the Index, then reads whichever policies look relevant; because the code
+carries the Index rather than a fixed list, adding or changing a policy is a
+vault edit with no code change. `POLICY_INDEX_PATH` overrides where the Index
+is read from (default `<home>\nimeesh vault\memory\policies\Policy Index.md`);
+that locator is the only configuration.
+
+The loader never evaluates content and never blocks or alters a call: it
+appends text to descriptions and nothing else. If the Index is missing or
+unreadable, the write tools carry `Policy Index unavailable — read
+memory/policies before writing.` instead, and every read and write still
+succeeds untouched. Note that the local CLIs reach basic-memory over stdio and
+bypass the proxy, so this loader does not cover them — there, policy loading is
+the Perspirator runtime's job.
+
 ## Why this shape
 
 - **bm scoped to a subfolder, not the vault** — makes it structurally
@@ -66,7 +88,7 @@ execution still happens only in the local CLIs.
 | `README.md` | This overview — the map of the whole system. |
 | `SETUP.md` | The **local** half: install bm, scope it to `vault\memory`, register it in Claude Code + Codex, memory-usage protocol. Written as a verifiable end-state a coding agent can be pointed at. |
 | `RUNBOOK.md` | The **remote** half: Funnel + GitHub OAuth App + proxy, step by step, with acceptance tests and the current live deployment values. |
-| `proxy.py` | The FastMCP OAuth proxy (GitHub provider + fail-closed `RequireAllowedUser` middleware). Config via `.env`; no secrets in code. |
+| `proxy.py` | The FastMCP OAuth proxy (GitHub provider + fail-closed `RequireAllowedUser` middleware, plus the `CarryPolicyIndex` loader). Config via `.env`; no secrets in code. |
 | `start.ps1` | Starts both services: bm on `127.0.0.1:8000`, proxy on `127.0.0.1:8080`. |
 | `.env.example` | Template for `.env` (gitignored): Funnel URL, GitHub OAuth creds, allowed user. |
 

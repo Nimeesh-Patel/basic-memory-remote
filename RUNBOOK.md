@@ -80,6 +80,44 @@ curl https://<FUNNEL>/.well-known/oauth-protected-resource/mcp
 curl -m 3 https://<FUNNEL>:8000/   # should NOT reach basic-memory (only 8080 is funneled)
 ```
 
+## Policy loader
+The proxy appends the text of `policies\Policy Index.md` to the descriptions of the
+write-class tools (`write_note`, `edit_note`, `delete_note`, `move_note`, `canvas`) on
+every `tools/list`, and sends the same text as the server's MCP instructions at session
+start, so policies are in context when an agent writes. The Index is re-read at most
+every ~2 minutes: edit it in Obsidian and the change reaches the next `tools/list`
+without restarting anything. Adding a policy needs no code change — a new note in
+`policies/` plus a line in the Index is enough. `POLICY_INDEX_PATH` (optional, in
+`.env`) overrides where the Index is read from; it is a locator, the loader's only
+configuration.
+
+The loader never evaluates content and never blocks or alters any call — it only
+appends text to tool descriptions. If the Index is missing or unreadable, the write
+tools carry `Policy Index unavailable — read memory/policies before writing.` and all
+reads and writes proceed untouched. To verify without going through OAuth, list the
+tools of an unauthenticated proxy carrying the same middleware:
+```powershell
+# from this folder; single quotes inside — PowerShell 5.1 strips embedded double quotes
+.\.venv\Scripts\python.exe -c @'
+import asyncio
+from fastmcp import Client
+from fastmcp.server import create_proxy
+import proxy as P
+
+async def main():
+    p = create_proxy('http://127.0.0.1:8000/mcp', name='check')
+    p.add_middleware(P.CarryPolicyIndex())
+    async with Client(p) as c:
+        for t in await c.list_tools():
+            if t.name in P.WRITE_CLASS_TOOLS:
+                print(t.name, P.POLICY_LEAD_IN in (t.description or ''))
+
+asyncio.run(main())
+'@
+```
+Every write-class tool should print `True`. Or simply connect from a web app and
+inspect `write_note`'s description.
+
 ## Security notes
 - basic-memory itself has no auth; it is bound to 127.0.0.1 and reachable ONLY through
   the proxy, which enforces GitHub OAuth + the single-user allowlist (fail-closed:
