@@ -147,9 +147,9 @@ External clients could not connect at all.
 
 Diagnose (from this laptop, but bypassing the tailnet path):
 ```
-# Ask Tailscale's authoritative DNS directly. Healthy = public ingress IPs
+# Ask an external DNS-over-HTTPS resolver. Healthy = public ingress IPs
 # (e.g. 103.84.155.x); broken = 100.x:
-nslookup lenovoideapad.tailec13e9.ts.net ns1.dnsimple.com
+node -e "fetch('https://dns.google/resolve?name=lenovoideapad.tailec13e9.ts.net&type=A').then(r=>r.json()).then(x=>console.log(x.Answer))"
 
 # True external vantage. Healthy = "HTTP/1.1 401" + Www-Authenticate
 # (that IS success — it's the OAuth entry point). Broken = connection error:
@@ -162,7 +162,7 @@ of the serve reset; plain funnel off/on alone did NOT fix it):
 tailscale down; tailscale up          # fresh control-plane session
 tailscale serve reset                 # wipe serve/funnel config
 tailscale funnel --bg --https=443 http://127.0.0.1:8080   # re-apply -> re-registers
-# then re-run the nslookup check above until it shows public IPs (TTL is 600s,
+# then re-run the external DNS check above until it shows public IPs (TTL is 600s,
 # so give ChatGPT/Claude up to ~10 min after the flip before retrying)
 ```
 
@@ -171,17 +171,35 @@ The failure recurred overnight on 2026-07-20 and again after a tailscaled restar
 the working theory is: any control-plane reconnect (sleep/wake, daemon restart/update)
 can silently drop the Funnel DNS registration.
 
-`funnel-watchdog.ps1` (this folder) automates the fix: it asks Tailscale's authoritative
-nameservers (dnsimple) for the hostname's A record — the same answer external clients
-get — and if it has reverted to the tailnet 100.x IP while Funnel is locally enabled,
-runs `tailscale serve reset` + re-applies the funnel, with a 30-min cooldown to avoid
-reset-looping during DNS propagation. It logs to `watchdog.log` (gitignored, rotated at
-500 KB) and does nothing if Funnel is intentionally off or the network is down.
+`funnel-watchdog.ps1` (this folder) asks Google DNS over HTTPS for the hostname's
+public A record. Do not use `Resolve-DnsName` for this check on Windows: Tailscale's
+MagicDNS layer can return the private 100.x address even when `-Server` names a public
+or authoritative nameserver. If the external answer has reverted to the tailnet 100.x
+IP while Funnel is locally enabled, the watchdog attempts one `tailscale serve reset`
+and one Funnel re-apply for that incident. A later run waits through the 10-minute DNS TTL
+and verifies the actual invariant: external DNS must contain a public Funnel ingress IP.
+
+A zero exit code from `tailscale funnel` means only that the local daemon accepted the
+configuration; it is not recovery. If external DNS is still 100.x after 12 minutes,
+the watchdog
+logs `UNHEALED`, returns exit code 2 to Task Scheduler, and stops resetting the Funnel.
+Repeated resets can conceal a control-plane or tailnet-side failure without repairing
+it. Once external DNS becomes public again, the watchdog logs `RECOVERED`, clears
+the incident state, and can repair a future incident once.
+
+It logs to `watchdog.log` (gitignored, rotated at 500 KB) and does nothing if Funnel is
+intentionally off or the network is down. A non-mutating inspection is available as:
+
+```
+powershell -NoProfile -File .\funnel-watchdog.ps1 -StatusOnly
+```
 
 Scheduled task `basic-memory-funnel-watchdog` (Task Scheduler, runs as the user,
 LeastPrivilege): every 15 min + 2 min after logon + 2 min after wake-from-sleep
-(Power-Troubleshooter event 1). Registration needed an elevated shell. Worst-case
-outage window is now ~15–45 min instead of "until someone notices".
+(Power-Troubleshooter event 1). Registration needed an elevated shell.
+`LastTaskResult = 2` means the local repair was attempted and the public invariant still
+failed; inspect the tailnet's Funnel node attribute, HTTPS certificate setting, machine
+state, and Tailscale service status rather than repeating the same local reset.
 
 Tailscale auto-update is enabled (`tailscale set --auto-update`, since 1.98.9) — note
 each update restarts the daemon, which can itself trigger the drop; the watchdog
