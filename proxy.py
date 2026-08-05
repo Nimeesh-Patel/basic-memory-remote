@@ -135,26 +135,55 @@ def _title(text: str, fallback: str) -> str:
     return fallback
 
 
-def policy_problems() -> str | None:
-    """One line per policy: its title and the problem it states it solves.
+def _load_surface_owner():
+    """Import Perspirator's `policy_index`, the one owner of this rule.
 
-    Composed at read time from the policy notes themselves, so nothing has to
-    be kept in sync. A file with no `## Problem` section is not a policy and is
-    skipped. Transport only: the problem text is copied, never interpreted.
+    The Policy Loader note states the contract for *both* routes: only
+    `status: active`, `type: policy` notes, and malformed active policies are
+    refused. This file used to answer that question a second time, and the two
+    answers had drifted apart in both directions — a superseded or draft policy
+    was served here as if current, while the local route refused the whole
+    surface over a single malformed file. One rule, one implementation.
     """
-    try:
-        paths = sorted(POLICIES_DIR.glob("*.md"))
-    except OSError:
+    for candidate in filter(None, [
+            os.environ.get("PERSPIRATOR_TOOLS"),
+            Path.home() / ".claude" / "commands",
+            Path.home() / ".agents" / "skills" / "perspirate"]):
+        directory = Path(candidate)
+        if not (directory / "policy_index.py").is_file():
+            continue
+        if str(directory) not in sys.path:
+            sys.path.insert(0, str(directory))
+        try:
+            from policy_index import active_policy_surface
+            return active_policy_surface
+        except ImportError:
+            continue
+    return None
+
+
+def policy_problems() -> str | None:
+    """One line per active policy: its title and the problem it says it solves.
+
+    Transport only: the problem text is copied, never interpreted. Returning
+    None means the surface could not be established, and the caller then sends
+    the disclosure. Serving an unfiltered list would be worse than serving
+    nothing, because a retired policy presented as current is a wrong
+    instruction rather than a missing one.
+    """
+    surface = _load_surface_owner()
+    if surface is None:
         return None
-    lines = []
-    for path in paths:
-        text = _read(path)
-        if text is None:
-            continue
-        problem = _section_body(text, PROBLEM_HEADING)
-        if not problem:
-            continue
-        lines.append(f"- {_title(text, path.stem)} — {' '.join(problem.split())}")
+    try:
+        records = surface(VAULT_PATH)
+    except (ValueError, OSError):
+        # A malformed active policy is refused as a whole surface, exactly as
+        # the local route refuses it. Ambiguity here is not a partial answer.
+        return None
+    lines = [
+        f"- {record['title']} — {' '.join(record['problem'].split())}"
+        for record in records
+    ]
     return "\n".join(lines) if lines else None
 
 
@@ -191,7 +220,23 @@ def policy_payload() -> tuple[str, frozenset[str] | None]:
 
 
 class RequireAllowedUser(Middleware):
-    """Fail-closed: only ALLOWED_GITHUB_USER may do anything."""
+    """Fail-closed: only ALLOWED_GITHUB_USER may issue a request.
+
+    FastMCP dispatches `on_message` -> `on_request` / `on_notification` ->
+    the method-specific hook, so gating `on_request` covers every request the
+    protocol has: initialize, tools/list, tools/call, resources/read,
+    resources/list, prompts/get and prompts/list. Every path that can read or
+    write memory is a request, so that is the whole data surface.
+
+    Notifications are deliberately not gated. They carry no data access —
+    cancellation, progress, initialized — and a notification has no response,
+    so raising from one would be an error with nowhere to go.
+
+    `on_call_tool` is a deliberate second gate on the one hook that executes
+    something, kept so a future change to request dispatch cannot silently open
+    the highest-consequence path. It is redundant on purpose, which is
+    different from redundancy nobody chose.
+    """
 
     def _enforce(self) -> None:
         token = get_access_token()
@@ -261,9 +306,41 @@ proxy = create_proxy(
 proxy.add_middleware(RequireAllowedUser())
 proxy.add_middleware(CarryPolicyIndex())
 
+def policy_status() -> tuple[bool, str]:
+    """Whether the Policy Index is actually being carried, and why not.
+
+    This program loads meaning owned by a Markdown note, and until 2026-08-05
+    it did so without ever saying whether the load succeeded: an edit that
+    removed `## Lead-in` and repurposed `## Tools that carry it` silently
+    replaced the Index with a disclosure for eight days, and nothing reported
+    it. Loading Markdown-owned theory is only half the contract; the other half
+    is refusing quietly to pretend it worked.
+    """
+    text, carriers = policy_payload()
+    if text == POLICY_UNAVAILABLE:
+        if _read(POLICY_LOADER_NOTE) is None:
+            return False, f"cannot read {POLICY_LOADER_NOTE}"
+        loader = _read(POLICY_LOADER_NOTE) or ""
+        missing = [
+            heading for heading in (LEAD_IN_HEADING, TOOLS_HEADING)
+            if not _section_body(loader, heading)
+        ]
+        if missing:
+            return False, f"{POLICY_LOADER_NOTE.name} has no {' and no '.join(missing)}"
+        return False, "no active policy surface (a malformed active policy, or none)"
+    if not carriers:
+        return False, f"{TOOLS_HEADING} named no tools"
+    return True, f"{len(text.splitlines()) - 2} policies on {len(carriers)} tools"
+
+
 if __name__ == "__main__":
+    healthy, detail = policy_status()
+    if "--check" in sys.argv:
+        print(f"policy index: {'ok' if healthy else 'DEGRADED'} — {detail}")
+        sys.exit(0 if healthy else 1)
     print(f"basic-memory-remote proxy -> backend {BACKEND_URL}")
     print(f"  public base_url: {BASE_URL}")
     print(f"  allowed GitHub user: {ALLOWED_GITHUB_USER}")
+    print(f"  policy index: {'ok' if healthy else 'DEGRADED'} — {detail}")
     print(f"  listening on http://{PROXY_HOST}:{PROXY_PORT}/mcp")
     proxy.run(transport="http", host=PROXY_HOST, port=PROXY_PORT)
