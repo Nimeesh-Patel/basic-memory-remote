@@ -3,5 +3,3 @@
 __pycache__/
 *.pyc
 *.log
-watchdog.state
-watchdog.repair

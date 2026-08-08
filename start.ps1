@@ -2,13 +2,13 @@
   Starts both services for the remote basic-memory endpoint:
     - basic-memory backend on 127.0.0.1:8000 (loopback only)
     - FastMCP OAuth proxy   on 127.0.0.1:8080 (reads .env)
-  Requires .env to be filled in first (see RUNBOOK.md).
+  Requires .env to be filled in first (see README.md).
 #>
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 if (-not (Test-Path (Join-Path $here ".env"))) {
-  Write-Error "No .env found. Copy .env.example to .env and fill it in (see RUNBOOK.md)."
+  Write-Error "No .env found. Copy .env.example to .env and fill it in (see README.md)."
   exit 1
 }
 
@@ -17,6 +17,12 @@ $env:PYTHONIOENCODING = "utf-8"
 
 $bm = "C:\Users\nimee\.local\bin\basic-memory.exe"
 $py = Join-Path $here ".venv\Scripts\python.exe"
+
+Write-Host "Checking Basic Memory index health before startup ..."
+& (Join-Path $here "start-local-mcp.ps1") -CheckOnly
+if ($LASTEXITCODE -ne 0) {
+  throw "Basic Memory index preflight failed; remote services were not started."
+}
 
 Write-Host "Starting basic-memory backend on 127.0.0.1:8000 ..."
 Start-Process -FilePath $bm `
