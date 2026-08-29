@@ -21,13 +21,13 @@ put secrets in this file.
   BACKEND_URL         default http://127.0.0.1:8000/mcp
   PROXY_HOST          default 127.0.0.1
   PROXY_PORT          default 8080
-  VAULT_PATH          default <home>\nimeesh vault   (the only note locator)
+  BASIC_MEMORY_PROJECT_PATH  validated memory-project path from the launcher
   POLICY_REFRESH_SECONDS  default 10
 
-Every text this proxy shows an agent lives in a vault note under VAULT_PATH.
-memory\policies\Policy Loader.md supplies the lead-in wording and the tools
+Every text this proxy shows an agent lives in a note under the validated memory
+project path. policies\Policy Loader.md supplies the lead-in wording and the tools
 that carry it; the selection surface is composed at read time from the
-`## Problem` section of every policy in memory\policies\, so no stored index
+`## Problem` section of every policy in policies\, so no stored index
 has to be kept in sync. The single exception, which cannot be otherwise, is
 the hardcoded disclosure used when those notes are unreadable.
 """
@@ -76,18 +76,33 @@ BACKEND_URL = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000/mcp")
 PROXY_HOST = os.environ.get("PROXY_HOST", "127.0.0.1")
 PROXY_PORT = int(os.environ.get("PROXY_PORT", "8080"))
 
-# One locator. Every text this program shows an agent lives in a vault note
-# below it; nothing here holds instruction text except the disclosure below.
-VAULT_PATH = Path(os.environ.get("VAULT_PATH", Path.home() / "nimeesh vault"))
+# The launcher establishes this from Basic Memory's validated project
+# configuration. The proxy does not independently guess a vault location.
+try:
+    MEMORY_PATH = (
+        Path(_require("BASIC_MEMORY_PROJECT_PATH"))
+        .expanduser()
+        .resolve(strict=True)
+    )
+except OSError as exc:
+    sys.exit(f"FATAL: invalid BASIC_MEMORY_PROJECT_PATH: {exc}")
+if not MEMORY_PATH.is_dir() or MEMORY_PATH.name.casefold() != "memory":
+    sys.exit(
+        "FATAL: BASIC_MEMORY_PROJECT_PATH must be the memory subtree, "
+        "not the vault root"
+    )
+
+# Perspirator's shared policy selector accepts the vault root; derive it from
+# the one validated memory path rather than owning a second location.
+VAULT_PATH = MEMORY_PATH.parent
 POLICY_REFRESH_SECONDS = float(os.environ.get("POLICY_REFRESH_SECONDS", "10"))
 
-POLICIES_DIR = VAULT_PATH / "memory" / "policies"
+POLICIES_DIR = MEMORY_PATH / "policies"
 POLICY_LOADER_NOTE = POLICIES_DIR / "Policy Loader.md"
 
 # Section headings: locators, not content.
 LEAD_IN_HEADING = "## Lead-in"
 TOOLS_HEADING = "## Tools that carry it"
-PROBLEM_HEADING = "## Problem"
 
 # The one hardcoded string this program is allowed. It cannot live in a note,
 # because it is what an agent must be told when the note layer is unreachable.
@@ -121,18 +136,6 @@ def _bullets(body: str) -> list[str]:
         for line in body.split("\n")
         if line.strip().startswith("- ")
     ]
-
-
-def _title(text: str, fallback: str) -> str:
-    """The frontmatter title, else the filename."""
-    lines = text.replace("\r\n", "\n").split("\n")
-    if lines and lines[0].strip() == "---":
-        for line in lines[1:]:
-            if line.strip() == "---":
-                break
-            if line.startswith("title:"):
-                return line.partition(":")[2].strip().strip("'\"") or fallback
-    return fallback
 
 
 def _load_surface_owner():

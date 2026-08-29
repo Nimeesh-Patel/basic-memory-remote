@@ -15,7 +15,6 @@ if (-not (Test-Path (Join-Path $here ".env"))) {
 $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
 
-$bm = "C:\Users\nimee\.local\bin\basic-memory.exe"
 $py = Join-Path $here ".venv\Scripts\python.exe"
 
 Write-Host "Checking Basic Memory index health before startup ..."
@@ -23,10 +22,13 @@ Write-Host "Checking Basic Memory index health before startup ..."
 if ($LASTEXITCODE -ne 0) {
   throw "Basic Memory index preflight failed; remote services were not started."
 }
+$bm = $env:BASIC_MEMORY_EXECUTABLE
+$project = $env:BASIC_MEMORY_PROJECT
 
 Write-Host "Starting basic-memory backend on 127.0.0.1:8000 ..."
+$env:BACKEND_URL = "http://127.0.0.1:8000/mcp"
 Start-Process -FilePath $bm `
-  -ArgumentList "mcp","--transport","streamable-http","--host","127.0.0.1","--port","8000" `
+  -ArgumentList "mcp","--transport","streamable-http","--host","127.0.0.1","--port","8000","--project",$project `
   -WindowStyle Hidden `
   -RedirectStandardOutput (Join-Path $here "bm.out.log") `
   -RedirectStandardError  (Join-Path $here "bm.err.log")

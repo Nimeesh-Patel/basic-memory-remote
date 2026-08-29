@@ -6,7 +6,7 @@ One persistent Markdown memory shared by local Codex/Claude Code and remote Chat
 
 ```text
 Codex / Claude Code  → local stdio MCP ───────────────┐
-                                                       ├→ C:\Users\nimee\nimeesh vault\memory
+                                                       ├→ <vault>\memory
 ChatGPT / Claude web → Tailscale Funnel → OAuth proxy → local HTTP MCP
 ```
 
@@ -14,7 +14,10 @@ Local Codex does not use Tailscale. The remote bridge exists only for web client
 
 ## Invariants
 
-- Project `memory` points only to `C:\Users\nimee\nimeesh vault\memory`; never the vault root.
+- Project `memory` points only to `<vault>\memory`; never the vault root. The
+  startup preflight validates that scope before any reindex or server launch.
+- Both MCP servers are explicitly restricted to that project. The proxy inherits
+  its policy path from the same validated project path.
 - Basic Memory remains loopback-only. Funnel exposes only the OAuth proxy.
 - MCP stdout is JSON-RPC only; health diagnostics go to stderr.
 - Embedding health is checked at startup, not by a recurring watchdog.
@@ -31,10 +34,11 @@ Local Codex does not use Tailscale. The remote bridge exists only for web client
 
 ## Local Codex
 
-`C:\Users\nimee\.codex\config.toml` starts:
+The Codex configuration under the current user profile points to the wrapper at:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Users\nimee\basic-memory-remote\start-local-mcp.ps1
+$wrapper = Join-Path $env:USERPROFILE "basic-memory-remote\start-local-mcp.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $wrapper
 ```
 
 The wrapper requires semantic search enabled, every indexed entity embedded, zero orphaned chunks, and no recommended reindex.
@@ -90,7 +94,8 @@ There is deliberately no scheduled watchdog. Repair the specific external DNS/OA
 ```powershell
 python -m pip install uv
 python -m uv tool install basic-memory
-basic-memory project add memory "C:\Users\nimee\nimeesh vault\memory"
+$memoryPath = Join-Path "<vault>" "memory"
+basic-memory project add memory $memoryPath
 basic-memory project default memory
 basic-memory project info memory --json --local
 
@@ -102,7 +107,10 @@ Then complete Remote web setup. The user Startup entry `basic-memory-remote.cmd`
 
 ## Policy loading
 
-The proxy reads `memory\policies\Policy Loader.md` and active policy notes beneath `memory\policies\` when composing MCP instructions/tool descriptions. It does not evaluate or enforce note content. Local CLIs load policy through their agent/Perspirator runtime.
+The proxy reads `policies\Policy Loader.md` and active policy notes beneath
+`policies\` within the validated Basic Memory project when composing MCP
+instructions/tool descriptions. It does not evaluate or enforce note content.
+Local CLIs load policy through their agent/Perspirator runtime.
 
 ## Security
 
