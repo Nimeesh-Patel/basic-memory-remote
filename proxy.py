@@ -37,6 +37,8 @@ import sys
 import time
 from pathlib import Path
 
+from proxy_config import require_loopback_backend, require_loopback_host
+
 from fastmcp.server import create_proxy
 from fastmcp.server.auth.providers.github import GitHubProvider
 from fastmcp.server.dependencies import get_access_token
@@ -75,6 +77,8 @@ ALLOWED_GITHUB_USER = _require("ALLOWED_GITHUB_USER").lower()
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000/mcp")
 PROXY_HOST = os.environ.get("PROXY_HOST", "127.0.0.1")
 PROXY_PORT = int(os.environ.get("PROXY_PORT", "8080"))
+require_loopback_backend(BACKEND_URL)
+require_loopback_host(PROXY_HOST)
 
 # The launcher establishes this from Basic Memory's validated project
 # configuration. The proxy does not independently guess a vault location.
@@ -114,7 +118,7 @@ _policy_cache: tuple[float, tuple[str, frozenset[str] | None]] | None = None
 def _read(path: Path) -> str | None:
     try:
         return path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeError):
         return None
 
 
@@ -288,7 +292,11 @@ class CarryPolicyIndex(Middleware):
                 for tool in tools
             ]
         except Exception:
-            return tools
+            # Enrichment failure must disclose that the policy layer was not
+            # loaded; unchanged descriptions would silently conceal it.
+            return [tool.model_copy(update={
+                "description": f"{tool.description or ''}\n\n{POLICY_UNAVAILABLE}".strip()
+            }) for tool in tools]
 
 
 auth = GitHubProvider(

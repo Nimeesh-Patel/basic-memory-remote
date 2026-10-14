@@ -117,3 +117,17 @@ Local CLIs load policy through their agent/Perspirator runtime.
 - GitHub identity is checked against `ALLOWED_GITHUB_USER` on every remote request/tool call.
 - Basic Memory and the proxy bind to loopback; Funnel publishes only the proxy.
 - Secrets live only in `.env`; rotate the GitHub OAuth secret if exposed.
+
+## Verification of the bridge
+
+`proxy_config.py` enforces the loopback backend and binding invariant before the
+proxy is constructed. Policy-read/enrichment failure carries an explicit
+unavailable disclosure; it must not silently return unqualified descriptions.
+Run `.\.venv\Scripts\python.exe -m unittest test_proxy -v` for bounded
+configuration, policy-failure and authorization checks. The tests use fixture
+credentials and do not contact GitHub or start a server.
+
+The launcher reports the exact process IDs it starts. Its output establishes a
+launch request, not endpoint readiness. Stop only those owned processes; never
+stop every Python or Basic Memory process by name. Local stdio clients remain
+independent of the optional remote backend.

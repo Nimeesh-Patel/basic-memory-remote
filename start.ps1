@@ -27,18 +27,21 @@ $project = $env:BASIC_MEMORY_PROJECT
 
 Write-Host "Starting basic-memory backend on 127.0.0.1:8000 ..."
 $env:BACKEND_URL = "http://127.0.0.1:8000/mcp"
-Start-Process -FilePath $bm `
+$backendProcess = Start-Process -FilePath $bm `
   -ArgumentList "mcp","--transport","streamable-http","--host","127.0.0.1","--port","8000","--project",$project `
   -WindowStyle Hidden `
+  -PassThru `
   -RedirectStandardOutput (Join-Path $here "bm.out.log") `
   -RedirectStandardError  (Join-Path $here "bm.err.log")
 
 Write-Host "Starting OAuth proxy on 127.0.0.1:8080 ..."
-Start-Process -FilePath $py -ArgumentList (Join-Path $here "proxy.py") `
+$proxyProcess = Start-Process -FilePath $py -ArgumentList (Join-Path $here "proxy.py") `
   -WorkingDirectory $here `
   -WindowStyle Hidden `
+  -PassThru `
   -RedirectStandardOutput (Join-Path $here "proxy.out.log") `
   -RedirectStandardError  (Join-Path $here "proxy.err.log")
 
-Write-Host "Both started. Logs: bm.*.log, proxy.*.log in $here"
-Write-Host "Stop with:  Get-Process basic-memory,python | Stop-Process  (or close them individually)"
+Write-Host "Launch requested: backend PID $($backendProcess.Id), proxy PID $($proxyProcess.Id). Logs: bm.*.log, proxy.*.log in $here"
+Write-Host "Verify endpoint readiness before treating the services as available."
+Write-Host "To stop these exact processes in this session: Stop-Process -Id $($backendProcess.Id),$($proxyProcess.Id)"
