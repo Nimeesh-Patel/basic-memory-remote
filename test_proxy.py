@@ -67,6 +67,71 @@ class ProxyPolicyTests(unittest.TestCase):
                 with self.assertRaises(AuthorizationError):
                     self.proxy.RequireAllowedUser()._enforce()
 
+    def policy_fixture(self, *, complete=True):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        vault = Path(temporary.name)
+        policies = vault / "memory" / "policies"
+        policies.mkdir(parents=True)
+        loader = policies / "Policy Loader.md"
+        loader.write_text(
+            "## LEAD-IN\n\nRead the matching policy.\n\n"
+            "## tools THAT carry it\n\n- write_note\n- edit_note\n",
+            encoding="utf-8",
+        )
+        (policies / "Fixture policy.md").write_text(
+            "---\ntitle: Fixture policy\ntype: policy\nstatus: active\n---\n"
+            "## Problem\n\nWhich fixture applies?\n"
+            + ("\n## Conjecture\n\nThe named fixture applies.\n" if complete else ""),
+            encoding="utf-8",
+        )
+        return vault, loader
+
+    def require_shared_tools(self):
+        tools = self.proxy._load_shared_tools()
+        if tools is None:
+            self.skipTest("Perspirator's installed shared toolkit is unavailable")
+        return tools
+
+    def test_policy_loader_uses_canonical_case_insensitive_section_reading(self):
+        shared = self.require_shared_tools()
+        vault, loader = self.policy_fixture()
+        with patch.object(self.proxy, "VAULT_PATH", vault), \
+                patch.object(self.proxy, "POLICY_LOADER_NOTE", loader), \
+                patch.object(self.proxy, "_policy_cache", None), \
+                patch.object(self.proxy, "_load_shared_tools", return_value=shared):
+            text, carriers = self.proxy.policy_payload()
+        self.assertIn("Read the matching policy.", text)
+        self.assertIn("Fixture policy", text)
+        self.assertNotIn(self.proxy.POLICY_UNAVAILABLE, text)
+        self.assertEqual(carriers, frozenset({"write_note", "edit_note"}))
+
+    def test_missing_shared_reader_discloses_unavailable_policy(self):
+        _, loader = self.policy_fixture()
+        with patch.object(self.proxy, "POLICY_LOADER_NOTE", loader), \
+                patch.object(self.proxy, "_policy_cache", None), \
+                patch.object(self.proxy, "_load_shared_tools", return_value=None):
+            self.assertEqual(self.proxy.policy_payload(),
+                             (self.proxy.POLICY_UNAVAILABLE, None))
+            healthy, detail = self.proxy.policy_status()
+        self.assertFalse(healthy)
+        self.assertIn("shared structural tools unavailable", detail)
+
+    def test_malformed_active_policy_retains_carriers_and_disclosure(self):
+        shared = self.require_shared_tools()
+        vault, loader = self.policy_fixture(complete=False)
+        with patch.object(self.proxy, "VAULT_PATH", vault), \
+                patch.object(self.proxy, "POLICY_LOADER_NOTE", loader), \
+                patch.object(self.proxy, "_policy_cache", None), \
+                patch.object(self.proxy, "_load_shared_tools", return_value=shared):
+            self.assertEqual(
+                self.proxy.policy_payload(),
+                (self.proxy.POLICY_UNAVAILABLE, frozenset({"write_note", "edit_note"})),
+            )
+            healthy, detail = self.proxy.policy_status()
+        self.assertFalse(healthy)
+        self.assertIn("no active policy surface", detail)
+
 
 if __name__ == "__main__":
     unittest.main()

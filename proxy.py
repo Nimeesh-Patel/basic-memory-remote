@@ -122,35 +122,16 @@ def _read(path: Path) -> str | None:
         return None
 
 
-def _section_body(text: str, heading: str) -> str:
-    """The lines under a `## ` heading, up to the next `## ` heading."""
-    body, collecting = [], False
-    for line in text.replace("\r\n", "\n").split("\n"):
-        if line.startswith("## "):
-            collecting = line.strip() == heading
-            continue
-        if collecting:
-            body.append(line)
-    return "\n".join(body).strip()
-
-
-def _bullets(body: str) -> list[str]:
-    return [
-        line.strip()[2:].strip()
-        for line in body.split("\n")
-        if line.strip().startswith("- ")
-    ]
-
-
-def _load_surface_owner():
-    """Import Perspirator's `policy_index`, the one owner of this rule.
+def _load_shared_tools():
+    """Load the canonical section, bullet and policy-surface readers.
 
     The Policy Loader note states the contract for *both* routes: only
     `status: active`, `type: policy` notes, and malformed active policies are
     refused. This file used to answer that question a second time, and the two
     answers had drifted apart in both directions — a superseded or draft policy
     was served here as if current, while the local route refused the whole
-    surface over a single malformed file. One rule, one implementation.
+    surface over a single malformed file. Section and bullet readers are also
+    shared so the transports do not interpret the same Markdown differently.
     """
     for candidate in filter(None, [
             os.environ.get("PERSPIRATOR_TOOLS"),
@@ -162,14 +143,15 @@ def _load_surface_owner():
         if str(directory) not in sys.path:
             sys.path.insert(0, str(directory))
         try:
+            from note_chunks import section, bullets
             from policy_index import active_policy_surface
-            return active_policy_surface
+            return section, bullets, active_policy_surface
         except ImportError:
             continue
     return None
 
 
-def policy_problems() -> str | None:
+def policy_problems(shared_tools=None) -> str | None:
     """One line per active policy: its title and the problem it says it solves.
 
     Transport only: the problem text is copied, never interpreted. Returning
@@ -178,9 +160,10 @@ def policy_problems() -> str | None:
     nothing, because a retired policy presented as current is a wrong
     instruction rather than a missing one.
     """
-    surface = _load_surface_owner()
-    if surface is None:
+    shared_tools = shared_tools or _load_shared_tools()
+    if shared_tools is None:
         return None
+    _, _, surface = shared_tools
     try:
         records = surface(VAULT_PATH)
     except (ValueError, OSError):
@@ -199,9 +182,9 @@ def policy_payload() -> tuple[str, frozenset[str] | None]:
 
     Transport only: the lead-in wording and the list of tools come from the
     Policy Loader note, and the selection surface is composed from each
-    policy's own stated problem. Nothing here parses, evaluates, or judges what
-    any of them say. A tool set of None means the note layer could not be read,
-    so the disclosure goes everywhere.
+    policy's own stated problem. Structural readers are shared; the proxy does
+    not evaluate or judge policy content. A tool set of None means the note
+    layer could not be read, so the disclosure goes everywhere.
     """
     global _policy_cache
     now = time.monotonic()
@@ -209,12 +192,14 @@ def policy_payload() -> tuple[str, frozenset[str] | None]:
         return _policy_cache[1]
 
     loader = _read(POLICY_LOADER_NOTE)
-    if loader is None:
+    shared_tools = _load_shared_tools() if loader is not None else None
+    if loader is None or shared_tools is None:
         payload = (POLICY_UNAVAILABLE, None)
     else:
-        lead_in = _section_body(loader, LEAD_IN_HEADING)
-        tools = _bullets(_section_body(loader, TOOLS_HEADING))
-        problems = policy_problems()
+        read_section, read_bullets, _ = shared_tools
+        lead_in = read_section(loader, LEAD_IN_HEADING)
+        tools = read_bullets(read_section(loader, TOOLS_HEADING))
+        problems = policy_problems(shared_tools)
         if not lead_in or not tools:
             payload = (POLICY_UNAVAILABLE, None)
         elif problems is None:
@@ -274,7 +259,8 @@ class CarryPolicyIndex(Middleware):
     agent's judgment, not this code's.
 
     This hook is additive and fail-open: it touches descriptions only, and any
-    failure returns the tools untouched. It never blocks or alters a call.
+    enrichment failure adds the unavailable-policy disclosure. It never blocks
+    or alters a call.
     """
 
     async def on_list_tools(self, context: MiddlewareContext, call_next):
@@ -332,9 +318,13 @@ def policy_status() -> tuple[bool, str]:
         if _read(POLICY_LOADER_NOTE) is None:
             return False, f"cannot read {POLICY_LOADER_NOTE}"
         loader = _read(POLICY_LOADER_NOTE) or ""
+        shared_tools = _load_shared_tools()
+        if shared_tools is None:
+            return False, "Perspirator shared structural tools unavailable"
+        read_section, _, _ = shared_tools
         missing = [
             heading for heading in (LEAD_IN_HEADING, TOOLS_HEADING)
-            if not _section_body(loader, heading)
+            if not read_section(loader, heading)
         ]
         if missing:
             return False, f"{POLICY_LOADER_NOTE.name} has no {' and no '.join(missing)}"
