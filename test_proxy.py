@@ -56,7 +56,7 @@ class ProxyPolicyTests(unittest.TestCase):
         async def next_call(_):
             return [tool]
         with patch.object(self.proxy, "policy_payload", side_effect=ValueError("fixture")):
-            results = asyncio.run(self.proxy.CarryPolicyIndex().on_list_tools(None, next_call))
+            results = asyncio.run(self.proxy.CarryPolicyReminder().on_list_tools(None, next_call))
         self.assertIn("Original", results[0].description)
         self.assertIn(self.proxy.POLICY_UNAVAILABLE, results[0].description)
 
@@ -76,7 +76,8 @@ class ProxyPolicyTests(unittest.TestCase):
         loader = policies / "Policy Loader.md"
         loader.write_text(
             "## LEAD-IN\n\nRead the matching policy.\n\n"
-            "## tools THAT carry it\n\n- write_note\n- edit_note\n",
+            "## tools THAT carry it\n\n- write_note\n- edit_note\n"
+            "## Discovery description\n\nFind active policy Problems.\n",
             encoding="utf-8",
         )
         (policies / "Fixture policy.md").write_text(
@@ -101,8 +102,11 @@ class ProxyPolicyTests(unittest.TestCase):
                 patch.object(self.proxy, "_policy_cache", None), \
                 patch.object(self.proxy, "_load_shared_tools", return_value=shared):
             text, carriers = self.proxy.policy_payload()
+            discovered = self.proxy.list_active_policies()
         self.assertIn("Read the matching policy.", text)
-        self.assertIn("Fixture policy", text)
+        self.assertNotIn("Fixture policy", text)
+        self.assertEqual(discovered['status'], 'complete')
+        self.assertEqual(discovered['policies'][0]['title'], 'Fixture policy')
         self.assertNotIn(self.proxy.POLICY_UNAVAILABLE, text)
         self.assertEqual(carriers, frozenset({"write_note", "edit_note"}))
 
@@ -131,6 +135,27 @@ class ProxyPolicyTests(unittest.TestCase):
             healthy, detail = self.proxy.policy_status()
         self.assertFalse(healthy)
         self.assertIn("no active policy surface", detail)
+
+    def test_catalogue_is_fresh_and_not_repeated_in_tool_descriptions(self):
+        shared = self.require_shared_tools()
+        vault, loader = self.policy_fixture()
+        tools = [SimpleNamespace(name=n, description='Original',
+            model_copy=lambda update, n=n: SimpleNamespace(name=n, **update))
+            for n in ['write_note', 'edit_note', 'read_note', 'list_active_policies']]
+        async def next_call(_):
+            return tools
+        with patch.object(self.proxy, 'VAULT_PATH', vault), \
+                patch.object(self.proxy, 'POLICY_LOADER_NOTE', loader), \
+                patch.object(self.proxy, '_policy_cache', None), \
+                patch.object(self.proxy, '_load_shared_tools', return_value=shared):
+            listed = asyncio.run(self.proxy.CarryPolicyReminder().on_list_tools(None, next_call))
+            self.assertTrue(all('Fixture policy' not in t.description for t in listed))
+            self.assertEqual(listed[2].description, 'Original')
+            policy = loader.parent / 'Fixture policy.md'
+            policy.write_text(policy.read_text().replace('Which fixture applies?', 'What changed?'))
+            self.assertEqual(self.proxy.list_active_policies()['policies'][0]['problem'], 'What changed?')
+            policy.write_text('---\ntype: policy\nstatus: active\n---\nBroken')
+            self.assertEqual(self.proxy.list_active_policies()['status'], 'unavailable')
 
 
 if __name__ == "__main__":

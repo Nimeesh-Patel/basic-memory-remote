@@ -107,6 +107,7 @@ POLICY_LOADER_NOTE = POLICIES_DIR / "Policy Loader.md"
 # Section headings: locators, not content.
 LEAD_IN_HEADING = "## Lead-in"
 TOOLS_HEADING = "## Tools that carry it"
+DISCOVERY_HEADING = "## Discovery description"
 
 # The one hardcoded string this program is allowed. It cannot live in a note,
 # because it is what an agent must be told when the note layer is unreachable.
@@ -151,15 +152,8 @@ def _load_shared_tools():
     return None
 
 
-def policy_problems(shared_tools=None) -> str | None:
-    """One line per active policy: its title and the problem it says it solves.
-
-    Transport only: the problem text is copied, never interpreted. Returning
-    None means the surface could not be established, and the caller then sends
-    the disclosure. Serving an unfiltered list would be worse than serving
-    nothing, because a retired policy presented as current is a wrong
-    instruction rather than a missing one.
-    """
+def policy_records(shared_tools=None):
+    """Current canonical selection surface, or None when it is unavailable."""
     shared_tools = shared_tools or _load_shared_tools()
     if shared_tools is None:
         return None
@@ -170,21 +164,32 @@ def policy_problems(shared_tools=None) -> str | None:
         # A malformed active policy is refused as a whole surface, exactly as
         # the local route refuses it. Ambiguity here is not a partial answer.
         return None
-    lines = [
-        f"- {record['title']} — {' '.join(record['problem'].split())}"
-        for record in records
-    ]
-    return "\n".join(lines) if lines else None
+    return records or None
+
+
+def list_active_policies() -> dict:
+    """Return policy Problems on demand; never treat a failed load as empty."""
+    records = policy_records()
+    if records is None:
+        return {"status": "unavailable", "error": POLICY_UNAVAILABLE}
+    return {"status": "complete", "policies": records}
+
+
+def discovery_description():
+    loader = _read(POLICY_LOADER_NOTE)
+    shared = _load_shared_tools()
+    if loader is None or shared is None:
+        return POLICY_UNAVAILABLE
+    return shared[0](loader, DISCOVERY_HEADING) or POLICY_UNAVAILABLE
 
 
 def policy_payload() -> tuple[str, frozenset[str] | None]:
     """The text to append and the tools that carry it, refreshed periodically.
 
-    Transport only: the lead-in wording and the list of tools come from the
-    Policy Loader note, and the selection surface is composed from each
-    policy's own stated problem. Structural readers are shared; the proxy does
-    not evaluate or judge policy content. A tool set of None means the note
-    layer could not be read, so the disclosure goes everywhere.
+    The reminder and carrier list come from Policy Loader. The canonical
+    selector verifies availability, but the catalogue is returned only by
+    list_active_policies. A carrier set of None sends the unavailable-layer
+    disclosure everywhere rather than silently omitting it.
     """
     global _policy_cache
     now = time.monotonic()
@@ -199,13 +204,13 @@ def policy_payload() -> tuple[str, frozenset[str] | None]:
         read_section, read_bullets, _ = shared_tools
         lead_in = read_section(loader, LEAD_IN_HEADING)
         tools = read_bullets(read_section(loader, TOOLS_HEADING))
-        problems = policy_problems(shared_tools)
-        if not lead_in or not tools:
+        records = policy_records(shared_tools)
+        if not lead_in or not tools or not read_section(loader, DISCOVERY_HEADING):
             payload = (POLICY_UNAVAILABLE, None)
-        elif problems is None:
+        elif records is None:
             payload = (POLICY_UNAVAILABLE, frozenset(tools))
         else:
-            payload = (f"{lead_in}\n\n{problems}", frozenset(tools))
+            payload = (lead_in, frozenset(tools))
 
     _policy_cache = (now, payload)
     return payload
@@ -248,19 +253,11 @@ class RequireAllowedUser(Middleware):
         return await call_next(context)
 
 
-class CarryPolicyIndex(Middleware):
-    """Append the Policy Index to tool descriptions on tools/list.
+class CarryPolicyReminder(Middleware):
+    """Carry a short Markdown-owned reminder; discover the catalogue on demand.
 
-    Policies in memory\\policies\\ only exert force if they are in context at the
-    moment of action, so the Index rides along with the tools that act on
-    memory. Which tools those are, and what the reminder says, are read from
-    the Policy Loader note — both are decisions, so neither lives here. What
-    the policies mean, and which of them the agent then reads in full, is the
-    agent's judgment, not this code's.
-
-    This hook is additive and fail-open: it touches descriptions only, and any
-    enrichment failure adds the unavailable-policy disclosure. It never blocks
-    or alters a call.
+    Enrichment failure discloses the unavailable policy layer. Authentication
+    remains independent and fail-closed. This hook changes no tool's execution.
     """
 
     async def on_list_tools(self, context: MiddlewareContext, call_next):
@@ -274,6 +271,8 @@ class CarryPolicyIndex(Middleware):
                     }
                 )
                 if carriers is None or tool.name in carriers
+                else tool.model_copy(update={"description": discovery_description()})
+                if tool.name == "list_active_policies"
                 else tool
                 for tool in tools
             ]
@@ -301,7 +300,10 @@ proxy = create_proxy(
     instructions=policy_payload()[0],
 )
 proxy.add_middleware(RequireAllowedUser())
-proxy.add_middleware(CarryPolicyIndex())
+proxy.tool(list_active_policies, name="list_active_policies",
+           description=discovery_description(),
+           annotations={"readOnlyHint": True, "destructiveHint": False})
+proxy.add_middleware(CarryPolicyReminder())
 
 def policy_status() -> tuple[bool, str]:
     """Whether the Policy Index is actually being carried, and why not.
@@ -323,7 +325,7 @@ def policy_status() -> tuple[bool, str]:
             return False, "Perspirator shared structural tools unavailable"
         read_section, _, _ = shared_tools
         missing = [
-            heading for heading in (LEAD_IN_HEADING, TOOLS_HEADING)
+            heading for heading in (LEAD_IN_HEADING, TOOLS_HEADING, DISCOVERY_HEADING)
             if not read_section(loader, heading)
         ]
         if missing:
@@ -331,7 +333,7 @@ def policy_status() -> tuple[bool, str]:
         return False, "no active policy surface (a malformed active policy, or none)"
     if not carriers:
         return False, f"{TOOLS_HEADING} named no tools"
-    return True, f"{len(text.splitlines()) - 2} policies on {len(carriers)} tools"
+    return True, f"policy discovery on demand; short reminder on {len(carriers)} tools"
 
 
 if __name__ == "__main__":

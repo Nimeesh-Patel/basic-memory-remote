@@ -107,9 +107,12 @@ Then complete Remote web setup. The user Startup entry `basic-memory-remote.cmd`
 
 ## Policy loading
 
-The proxy reads `policies\Policy Loader.md` and active policy notes beneath
-`policies\` within the validated Basic Memory project when composing MCP
-instructions/tool descriptions. It does not evaluate or enforce note content.
+The proxy reads `policies\Policy Loader.md` for a short reminder in MCP
+instructions and selected write-tool descriptions. `list_active_policies`
+returns the current active policy titles, paths and Problems on demand through
+Perspirator's canonical reader; the full catalogue is no longer repeated on
+each writing tool. Failed loads are disclosed as unavailable. Neither route
+evaluates or enforces policy content.
 Local CLIs load policy through their agent/Perspirator runtime.
 
 ## Security
