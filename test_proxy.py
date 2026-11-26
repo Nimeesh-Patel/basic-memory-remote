@@ -91,8 +91,12 @@ class ProxyPolicyTests(unittest.TestCase):
     def require_shared_tools(self):
         tools = self.proxy._load_shared_tools()
         if tools is None:
-            self.skipTest("Perspirator's installed shared toolkit is unavailable")
+            self.skipTest("The configured shared Perspirator toolkit is unavailable")
         return tools
+
+    def test_shared_reader_does_not_fall_back_to_agent_copies(self):
+        with patch.dict(os.environ, {"PERSPIRATOR_TOOLS": ""}):
+            self.assertIsNone(self.proxy._load_shared_tools())
 
     def test_policy_loader_uses_canonical_case_insensitive_section_reading(self):
         shared = self.require_shared_tools()

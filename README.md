@@ -113,6 +113,8 @@ returns the current active policy titles, paths and Problems on demand through
 Perspirator's canonical reader; the full catalogue is no longer repeated on
 each writing tool. Failed loads are disclosed as unavailable. Neither route
 evaluates or enforces policy content.
+Set `PERSPIRATOR_TOOLS` in `.env` to the Perspirator checkout used by the
+local agents. This gives the proxy the same policy reader.
 Local CLIs load policy through their agent/Perspirator runtime.
 
 ## Security

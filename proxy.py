@@ -22,6 +22,7 @@ put secrets in this file.
   PROXY_HOST          default 127.0.0.1
   PROXY_PORT          default 8080
   BASIC_MEMORY_PROJECT_PATH  validated memory-project path from the launcher
+  PERSPIRATOR_TOOLS    canonical Perspirator toolkit directory
   POLICY_REFRESH_SECONDS  default 10
 
 Every text this proxy shows an agent lives in a note under the validated memory
@@ -134,22 +135,24 @@ def _load_shared_tools():
     surface over a single malformed file. Section and bullet readers are also
     shared so the transports do not interpret the same Markdown differently.
     """
-    for candidate in filter(None, [
-            os.environ.get("PERSPIRATOR_TOOLS"),
-            Path.home() / ".claude" / "commands",
-            Path.home() / ".agents" / "skills" / "perspirate"]):
-        directory = Path(candidate)
-        if not (directory / "policy_index.py").is_file():
-            continue
-        if str(directory) not in sys.path:
-            sys.path.insert(0, str(directory))
-        try:
-            from note_chunks import section, bullets
-            from policy_index import active_policy_surface
-            return section, bullets, active_policy_surface
-        except ImportError:
-            continue
-    return None
+    configured = os.environ.get("PERSPIRATOR_TOOLS")
+    if not configured:
+        return None
+    directory = Path(configured).expanduser().resolve()
+    if not all((directory / name).is_file()
+               for name in ("policy_index.py", "note_chunks.py")):
+        return None
+    if str(directory) not in sys.path:
+        sys.path.insert(0, str(directory))
+    try:
+        import note_chunks
+        import policy_index
+    except ImportError:
+        return None
+    for module in (note_chunks, policy_index):
+        if Path(module.__file__).resolve().parent != directory:
+            return None
+    return note_chunks.section, note_chunks.bullets, policy_index.active_policy_surface
 
 
 def policy_records(shared_tools=None):
